@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Dados reais (salários/exceções) nunca devem ir pro git
+/dados/*
+!/dados/.gitkeep
