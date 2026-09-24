@@ -16,6 +16,7 @@ import {
   RefreshCw,
   UserPlus,
   Power,
+  Pencil,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { isNameInList, findRateForName } from './shared/nameMatch';
@@ -275,7 +276,13 @@ export default function App() {
 
   const [newExcecaoInput, setNewExcecaoInput] = useState<string>('');
   const [excecaoSalvando, setExcecaoSalvando] = useState<boolean>(false);
+  const [excecaoTogglingNome, setExcecaoTogglingNome] = useState<string | null>(null);
   const [excecaoErro, setExcecaoErro] = useState<string>('');
+
+  const [editandoSalario, setEditandoSalario] = useState<string | null>(null);
+  const [editandoValor, setEditandoValor] = useState<string>('');
+  const [salvandoEdicao, setSalvandoEdicao] = useState<boolean>(false);
+  const [edicaoErro, setEdicaoErro] = useState<string>('');
 
   const [toleranciaMinutos, setToleranciaMinutos] = useState<number>(TOLERANCIA_MINUTOS_DEFAULT);
   const [toleranciaInput, setToleranciaInput] = useState<string>(String(TOLERANCIA_MINUTOS_DEFAULT));
@@ -417,10 +424,8 @@ export default function App() {
     }
   };
 
-  const handleAdicionarExcecao = async () => {
-    const nome = newExcecaoInput.trim().toUpperCase();
+  const adicionarExcecao = async (nome: string) => {
     if (!nome) return;
-    setExcecaoSalvando(true);
     setExcecaoErro('');
     try {
       const resp = await fetch('/api/excecoes', {
@@ -433,13 +438,19 @@ export default function App() {
       const store: SalariosStore = body;
       setSalariosMap(store.salarios);
       setExcecoesList(store.excecoes);
-      setNewExcecaoInput('');
       reprocessPonto(store.salarios, store.excecoes, toleranciaMinutos);
     } catch (err: any) {
       setExcecaoErro(`Erro ao adicionar exceção: ${err?.message || err}`);
-    } finally {
-      setExcecaoSalvando(false);
     }
+  };
+
+  const handleAdicionarExcecao = async () => {
+    const nome = newExcecaoInput.trim().toUpperCase();
+    if (!nome) return;
+    setExcecaoSalvando(true);
+    await adicionarExcecao(nome);
+    setNewExcecaoInput('');
+    setExcecaoSalvando(false);
   };
 
   const handleRemoverExcecao = async (nome: string) => {
@@ -454,6 +465,62 @@ export default function App() {
       reprocessPonto(store.salarios, store.excecoes, toleranciaMinutos);
     } catch (err: any) {
       setExcecaoErro(`Erro ao remover exceção: ${err?.message || err}`);
+    }
+  };
+
+  const handleToggleExcecao = async (nome: string, marcar: boolean) => {
+    setExcecaoTogglingNome(nome);
+    // Atualização otimista: sem isso, o checkbox "pisca" de volta pro estado
+    // antigo entre o clique e a resposta do servidor (o re-render disparado
+    // por setExcecaoTogglingNome usa a excecoesList ainda desatualizada).
+    setExcecoesList(prev => (marcar ? [...prev, nome] : prev.filter(n => n !== nome)));
+    if (marcar) {
+      await adicionarExcecao(nome);
+    } else {
+      await handleRemoverExcecao(nome);
+    }
+    setExcecaoTogglingNome(null);
+  };
+
+  const handleIniciarEdicaoSalario = (nome: string, valorAtual: number) => {
+    setEdicaoErro('');
+    setEditandoSalario(nome);
+    setEditandoValor(String(valorAtual).replace('.', ','));
+  };
+
+  const handleCancelarEdicaoSalario = () => {
+    setEditandoSalario(null);
+    setEditandoValor('');
+    setEdicaoErro('');
+  };
+
+  const handleSalvarEdicaoSalario = async () => {
+    if (!editandoSalario) return;
+    const valorHora = parseFloat(editandoValor.replace(',', '.'));
+    if (!Number.isFinite(valorHora) || valorHora <= 0) {
+      setEdicaoErro('Informe um valor de hora válido (maior que zero).');
+      return;
+    }
+    setSalvandoEdicao(true);
+    setEdicaoErro('');
+    try {
+      const resp = await fetch('/api/salarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome: editandoSalario, valorHora }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body?.error || `Servidor respondeu ${resp.status}`);
+      const store: SalariosStore = body;
+      setSalariosMap(store.salarios);
+      setExcecoesList(store.excecoes);
+      reprocessPonto(store.salarios, store.excecoes, toleranciaMinutos);
+      setEditandoSalario(null);
+      setEditandoValor('');
+    } catch (err: any) {
+      setEdicaoErro(`Erro ao salvar: ${err?.message || err}`);
+    } finally {
+      setSalvandoEdicao(false);
     }
   };
 
@@ -585,6 +652,7 @@ export default function App() {
                     <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase tracking-wider text-[11px]">
                       <th className="py-2 px-3">Funcionário</th>
                       <th className="py-2 px-3">Valor Hora</th>
+                      <th className="py-2 px-3 text-center">Exceção</th>
                       <th className="py-2 px-3 w-10"></th>
                     </tr>
                   </thead>
@@ -592,7 +660,60 @@ export default function App() {
                     {salariosOrdenados.map(([nome, valor]) => (
                       <tr key={nome} className="hover:bg-slate-800/40">
                         <td className="py-2 px-3 font-sans text-slate-200">{nome}</td>
-                        <td className="py-2 px-3 font-mono text-emerald-400">R$ {formatBRL(valor)}</td>
+                        <td className="py-2 px-3 font-mono text-emerald-400">
+                          {editandoSalario === nome ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-slate-500">R$</span>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                autoFocus
+                                value={editandoValor}
+                                onChange={e => setEditandoValor(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') handleSalvarEdicaoSalario();
+                                  if (e.key === 'Escape') handleCancelarEdicaoSalario();
+                                }}
+                                className="w-20 bg-slate-900 border border-amber-500/60 rounded-lg px-2 py-1 text-xs text-white focus:outline-none"
+                              />
+                              <button
+                                onClick={handleSalvarEdicaoSalario}
+                                disabled={salvandoEdicao}
+                                title="Salvar"
+                                className="p-1 text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={handleCancelarEdicaoSalario}
+                                disabled={salvandoEdicao}
+                                title="Cancelar"
+                                className="p-1 text-slate-500 hover:text-rose-400 disabled:opacity-50"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleIniciarEdicaoSalario(nome, valor)}
+                              title="Clique para editar o valor-hora"
+                              className="flex items-center gap-1.5 hover:text-emerald-300 group font-mono"
+                            >
+                              R$ {formatBRL(valor)}
+                              <Pencil className="w-3 h-3 text-slate-600 group-hover:text-emerald-400" />
+                            </button>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isNameInList(nome, excecoesList)}
+                            disabled={excecaoTogglingNome === nome}
+                            onChange={e => handleToggleExcecao(nome, e.target.checked)}
+                            title="Marcar como exceção (sem carência de tolerância)"
+                            className="w-3.5 h-3.5 accent-purple-500 cursor-pointer disabled:opacity-50"
+                          />
+                        </td>
                         <td className="py-2 px-3 text-right">
                           <button
                             onClick={() => {
@@ -610,6 +731,7 @@ export default function App() {
                   </tbody>
                 </table>
               )}
+              {edicaoErro && <p className="text-rose-300 text-[11px] mt-2">{edicaoErro}</p>}
             </div>
           )}
 
