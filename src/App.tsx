@@ -15,6 +15,7 @@ import {
   DollarSign,
   RefreshCw,
   UserPlus,
+  Power,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { isNameInList, findRateForName } from './shared/nameMatch';
@@ -281,6 +282,20 @@ export default function App() {
   const [toleranciaSalvando, setToleranciaSalvando] = useState<boolean>(false);
   const [toleranciaErro, setToleranciaErro] = useState<string>('');
 
+  const [mostrarConfirmarFechar, setMostrarConfirmarFechar] = useState<boolean>(false);
+  const [fechando, setFechando] = useState<boolean>(false);
+  const [programaEncerrado, setProgramaEncerrado] = useState<boolean>(false);
+
+  const handleFecharPrograma = async () => {
+    setFechando(true);
+    try {
+      await fetch('/api/desligar', { method: 'POST' });
+    } catch {
+      // Servidor pode derrubar a conexão antes de responder — é o esperado.
+    }
+    setProgramaEncerrado(true);
+  };
+
   const reprocessPonto = useCallback((map: Record<string, number>, list: string[], tolerancia: number) => {
     const wb = pontoWbRef.current;
     if (!wb) return;
@@ -493,6 +508,18 @@ export default function App() {
   const salariosOrdenados = Object.entries(salariosMap).sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
   const valorParaExcluir = salarioParaExcluir ? salariosMap[salarioParaExcluir] : undefined;
 
+  if (programaEncerrado) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+        <div className="text-center space-y-3">
+          <Power className="w-10 h-10 text-amber-400 mx-auto" />
+          <h1 className="text-lg font-bold text-white">Programa encerrado</h1>
+          <p className="text-sm text-slate-400">Pode fechar esta aba do navegador.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20 px-6 py-4">
@@ -506,6 +533,14 @@ export default function App() {
               <p className="text-xs text-slate-400">Regra de carência de {toleranciaMinutos} minutos</p>
             </div>
           </div>
+          <button
+            onClick={() => setMostrarConfirmarFechar(true)}
+            title="Encerrar o servidor e a janela do programa"
+            className="px-3 py-2 bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 text-xs font-semibold rounded-xl border border-slate-700 hover:border-rose-800/60 flex items-center gap-1.5 transition-colors"
+          >
+            <Power className="w-3.5 h-3.5" />
+            Fechar Programa
+          </button>
         </div>
       </header>
 
@@ -889,6 +924,41 @@ export default function App() {
                   className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-colors"
                 >
                   Cadastrar Depois
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: confirmar fechar programa */}
+        {mostrarConfirmarFechar && (
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-800 bg-slate-950 flex items-center gap-2">
+                <Power className="w-5 h-5 text-rose-400" />
+                <h3 className="text-base font-bold text-white">Fechar Programa</h3>
+              </div>
+              <div className="p-5 space-y-2">
+                <p className="text-sm text-slate-300">Encerrar o programa agora?</p>
+                <p className="text-xs text-slate-500">
+                  Isso desliga o servidor e fecha a janela preta sozinho. Você pode fechar esta aba do navegador
+                  depois.
+                </p>
+              </div>
+              <div className="px-6 py-3 border-t border-slate-800 bg-slate-950 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setMostrarConfirmarFechar(false)}
+                  disabled={fechando}
+                  className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleFecharPrograma}
+                  disabled={fechando}
+                  className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  {fechando ? 'Fechando...' : 'Fechar Programa'}
                 </button>
               </div>
             </div>

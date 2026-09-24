@@ -102,6 +102,13 @@ app.post(
   })
 );
 
+app.post('/api/desligar', (_req, res) => {
+  res.json({ ok: true });
+  // Dá tempo da resposta chegar no navegador antes do processo (e a janela
+  // preta do iniciar.bat) encerrar.
+  setTimeout(() => process.exit(0), 200);
+});
+
 // Em produção (depois de `npm run build`), o próprio servidor entrega a
 // interface — um processo só, uma porta só, mais simples pro atalho do Windows.
 // App de tela única (sem rotas de cliente), então servir estático já basta:
@@ -111,7 +118,7 @@ if (fs.existsSync(path.join(distDir, 'index.html'))) {
   app.use(express.static(distDir));
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.log(`Calculadora de Horas Extras rodando em http://localhost:${PORT}`);
   console.log(`Pasta de dados: ${DADOS_DIR}`);
   if (!fs.existsSync(path.join(distDir, 'index.html'))) {
