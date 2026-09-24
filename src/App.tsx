@@ -21,7 +21,10 @@ import { isNameInList, findRateForName } from './shared/nameMatch';
 import type { SalariosStore } from './shared/types';
 
 // Regras fixas do cálculo (antes ajustáveis na aba "Simulador", removida).
-const TOLERANCIA_MINUTOS = 19;
+// A tolerância (minutos de carência) agora é editável na tela e fica salva
+// na aba "Configuração" do dados/salarios.xlsx — DEFAULT só vale antes do
+// primeiro carregamento.
+const TOLERANCIA_MINUTOS_DEFAULT = 19;
 const START_ROW = 3;
 const INCLUDE_EXCESS_ONLY = false;
 const APPLY_100_PERCENT = false;
@@ -81,11 +84,12 @@ const formatBRL = (n: number) =>
 const processPontoWorkbook = (
   wb: XLSX.WorkBook,
   salariosMap: Record<string, number>,
-  excecoesList: string[]
+  excecoesList: string[],
+  toleranciaMinutos: number
 ): { resultados: ResultadoFuncionario[]; pendentes: string[] } => {
   const resultados: ResultadoFuncionario[] = [];
   const pendentes: string[] = [];
-  const limitSec = TOLERANCIA_MINUTOS * 60;
+  const limitSec = toleranciaMinutos * 60;
 
   wb.SheetNames.forEach(sheetName => {
     const ws = wb.Sheets[sheetName];
@@ -183,7 +187,7 @@ const processPontoWorkbook = (
           sec50,
           ex100Str,
           status50: 'aprovado',
-          motivo: `Ultrapassou ${TOLERANCIA_MINUTOS} min (soma integral: ${exU50Str})`,
+          motivo: `Ultrapassou ${toleranciaMinutos} min (soma integral: ${exU50Str})`,
         });
       } else if (sec50 > 0) {
         diasDescartados++;
@@ -194,7 +198,7 @@ const processPontoWorkbook = (
           sec50,
           ex100Str,
           status50: 'descartado',
-          motivo: `Feito ${exU50Str} (<= ${TOLERANCIA_MINUTOS} min carência descartado)`,
+          motivo: `Feito ${exU50Str} (<= ${toleranciaMinutos} min carência descartado)`,
         });
       } else {
         detalhesDias.push({
@@ -272,10 +276,15 @@ export default function App() {
   const [excecaoSalvando, setExcecaoSalvando] = useState<boolean>(false);
   const [excecaoErro, setExcecaoErro] = useState<string>('');
 
-  const reprocessPonto = useCallback((map: Record<string, number>, list: string[]) => {
+  const [toleranciaMinutos, setToleranciaMinutos] = useState<number>(TOLERANCIA_MINUTOS_DEFAULT);
+  const [toleranciaInput, setToleranciaInput] = useState<string>(String(TOLERANCIA_MINUTOS_DEFAULT));
+  const [toleranciaSalvando, setToleranciaSalvando] = useState<boolean>(false);
+  const [toleranciaErro, setToleranciaErro] = useState<string>('');
+
+  const reprocessPonto = useCallback((map: Record<string, number>, list: string[], tolerancia: number) => {
     const wb = pontoWbRef.current;
     if (!wb) return;
-    const { resultados, pendentes } = processPontoWorkbook(wb, map, list);
+    const { resultados, pendentes } = processPontoWorkbook(wb, map, list, tolerancia);
     // Só reabre o modal se surgiu um nome pendente que não estava lá antes —
     // evita reinterromper o usuário toda vez que ele mexe em outra coisa
     // (ex: adicionar uma exceção) enquanto um pendente já visto continua em aberto.
@@ -298,7 +307,9 @@ export default function App() {
       const store: SalariosStore = await resp.json();
       setSalariosMap(store.salarios);
       setExcecoesList(store.excecoes);
-      reprocessPonto(store.salarios, store.excecoes);
+      setToleranciaMinutos(store.toleranciaMinutos);
+      setToleranciaInput(String(store.toleranciaMinutos));
+      reprocessPonto(store.salarios, store.excecoes, store.toleranciaMinutos);
     } catch (err: any) {
       setSalariosError(
         `Não consegui ler a lista de salários (${err?.message || err}). Verifique se o programa "iniciar.bat" está rodando e se o arquivo dados/salarios.xlsx não está aberto no Excel.`
@@ -329,7 +340,7 @@ export default function App() {
           return;
         }
         pontoWbRef.current = wb;
-        reprocessPonto(salariosMap, excecoesList);
+        reprocessPonto(salariosMap, excecoesList, toleranciaMinutos);
       } catch (err: any) {
         setUploadError(`Erro ao processar arquivo de ponto: ${err?.message || err}`);
       }
@@ -363,7 +374,7 @@ export default function App() {
         delete next[nome];
         return next;
       });
-      reprocessPonto(store.salarios, store.excecoes);
+      reprocessPonto(store.salarios, store.excecoes, toleranciaMinutos);
     } catch (err: any) {
       setRegistroErro(`Erro ao cadastrar ${nome}: ${err?.message || err}`);
     } finally {
@@ -382,7 +393,7 @@ export default function App() {
       const store: SalariosStore = body;
       setSalariosMap(store.salarios);
       setExcecoesList(store.excecoes);
-      reprocessPonto(store.salarios, store.excecoes);
+      reprocessPonto(store.salarios, store.excecoes, toleranciaMinutos);
       setSalarioParaExcluir(null);
     } catch (err: any) {
       setExcluirErro(`Erro ao excluir: ${err?.message || err}`);
@@ -408,7 +419,7 @@ export default function App() {
       setSalariosMap(store.salarios);
       setExcecoesList(store.excecoes);
       setNewExcecaoInput('');
-      reprocessPonto(store.salarios, store.excecoes);
+      reprocessPonto(store.salarios, store.excecoes, toleranciaMinutos);
     } catch (err: any) {
       setExcecaoErro(`Erro ao adicionar exceção: ${err?.message || err}`);
     } finally {
@@ -425,9 +436,38 @@ export default function App() {
       const store: SalariosStore = body;
       setSalariosMap(store.salarios);
       setExcecoesList(store.excecoes);
-      reprocessPonto(store.salarios, store.excecoes);
+      reprocessPonto(store.salarios, store.excecoes, toleranciaMinutos);
     } catch (err: any) {
       setExcecaoErro(`Erro ao remover exceção: ${err?.message || err}`);
+    }
+  };
+
+  const handleSalvarTolerancia = async () => {
+    const minutos = parseInt(toleranciaInput, 10);
+    if (!Number.isInteger(minutos) || minutos < 0) {
+      setToleranciaErro('Informe um número inteiro de minutos (0 ou mais).');
+      return;
+    }
+    setToleranciaErro('');
+    setToleranciaSalvando(true);
+    try {
+      const resp = await fetch('/api/configuracao', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toleranciaMinutos: minutos }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body?.error || `Servidor respondeu ${resp.status}`);
+      const store: SalariosStore = body;
+      setSalariosMap(store.salarios);
+      setExcecoesList(store.excecoes);
+      setToleranciaMinutos(store.toleranciaMinutos);
+      setToleranciaInput(String(store.toleranciaMinutos));
+      reprocessPonto(store.salarios, store.excecoes, store.toleranciaMinutos);
+    } catch (err: any) {
+      setToleranciaErro(`Erro ao salvar tolerância: ${err?.message || err}`);
+    } finally {
+      setToleranciaSalvando(false);
     }
   };
 
@@ -436,14 +476,14 @@ export default function App() {
     const wb = XLSX.utils.book_new();
     const dataRows = processedResults.map(r => ({
       'NOME DO FUNCIONÁRIO': r.nome,
-      'REGRA APLICADA': r.ehExcecao ? 'EXCEÇÃO (CADA MINUTO)' : `GERAL (> ${TOLERANCIA_MINUTOS}m)`,
+      'REGRA APLICADA': r.ehExcecao ? 'EXCEÇÃO (CADA MINUTO)' : `GERAL (> ${toleranciaMinutos}m)`,
       'EXTRAS 50%': r.extras50,
       'TOTAL 50%': Number(r.total50.toFixed(2)),
       'EXTRAS 100%': r.extras100,
       'TOTAL 100%': Number(r.total100.toFixed(2)),
       TOTAL: Number(r.totalGeral.toFixed(2)),
-      [`DIAS 50% APROV. (> ${TOLERANCIA_MINUTOS}m)`]: r.diasAprovados,
-      [`DIAS 50% DESC. (<= ${TOLERANCIA_MINUTOS}m)`]: r.diasDescartados,
+      [`DIAS 50% APROV. (> ${toleranciaMinutos}m)`]: r.diasAprovados,
+      [`DIAS 50% DESC. (<= ${toleranciaMinutos}m)`]: r.diasDescartados,
     }));
     const ws = XLSX.utils.json_to_sheet(dataRows);
     XLSX.utils.book_append_sheet(wb, ws, 'Relatorio');
@@ -463,7 +503,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-white leading-tight">Calculadora de Horas Extras</h1>
-              <p className="text-xs text-slate-400">Regra de carência de {TOLERANCIA_MINUTOS} minutos</p>
+              <p className="text-xs text-slate-400">Regra de carência de {toleranciaMinutos} minutos</p>
             </div>
           </div>
         </div>
@@ -543,7 +583,7 @@ export default function App() {
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
-                <span className="font-bold text-purple-300">Funcionários em Exceção (sem carência de {TOLERANCIA_MINUTOS} min):</span>
+                <span className="font-bold text-purple-300">Funcionários em Exceção (sem carência de {toleranciaMinutos} min):</span>
               </div>
               <span className="text-[11px] text-purple-400/80 font-mono">{excecoesList.length} cadastrado(s)</span>
             </div>
@@ -611,6 +651,34 @@ export default function App() {
             Envie o arquivo de ponto (.xlsx) para calcular as horas extras automaticamente.
           </p>
 
+          <div className="mt-4 p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center gap-2">
+            <label htmlFor="tolerancia-minutos" className="text-xs text-slate-300 font-semibold">
+              Tolerância (minutos de carência):
+            </label>
+            <input
+              id="tolerancia-minutos"
+              type="text"
+              inputMode="numeric"
+              value={toleranciaInput}
+              onChange={e => setToleranciaInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSalvarTolerancia();
+              }}
+              className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white text-center focus:outline-none focus:border-amber-400"
+            />
+            <button
+              onClick={handleSalvarTolerancia}
+              disabled={toleranciaSalvando || toleranciaInput === String(toleranciaMinutos)}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-xs font-bold rounded-lg transition-colors"
+            >
+              {toleranciaSalvando ? 'Salvando...' : 'Salvar'}
+            </button>
+            <span className="text-[11px] text-slate-500">
+              Dias com extra 50% ≤ {toleranciaMinutos} min são descartados na regra geral. Salvo em dados/salarios.xlsx.
+            </span>
+            {toleranciaErro && <span className="w-full text-[11px] text-rose-300">{toleranciaErro}</span>}
+          </div>
+
           <div className="mt-4">
             <div
               className={`p-4 rounded-xl border-2 border-dashed bg-slate-950 flex flex-col items-center justify-center text-center transition-colors ${
@@ -674,7 +742,7 @@ export default function App() {
                   Resultado do Processamento ({processedResults.length} funcionários)
                 </h4>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Regra Geral: dias com extras 50% ≤ {TOLERANCIA_MINUTOS} min descartados. Exceções: cada minuto calculado.
+                  Regra Geral: dias com extras 50% ≤ {toleranciaMinutos} min descartados. Exceções: cada minuto calculado.
                 </p>
               </div>
               <button
@@ -724,7 +792,7 @@ export default function App() {
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                            Geral (&gt; {TOLERANCIA_MINUTOS}m)
+                            Geral (&gt; {toleranciaMinutos}m)
                           </span>
                         )}
                       </td>
@@ -880,7 +948,7 @@ export default function App() {
                       </span>
                     ) : (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                        Regra Geral (&gt; {TOLERANCIA_MINUTOS} min)
+                        Regra Geral (&gt; {toleranciaMinutos} min)
                       </span>
                     )}
                   </div>
@@ -930,7 +998,7 @@ export default function App() {
                         Por que houve {selectedEmployeeDetail.diasDescartados} dia(s) descartado(s)?
                       </span>
                       <span>
-                        Na regra geral, dias com <strong>≤ {TOLERANCIA_MINUTOS} minutos</strong> de extra 50% (coluna
+                        Na regra geral, dias com <strong>≤ {toleranciaMinutos} minutos</strong> de extra 50% (coluna
                         ExU50) não são computados para pagamento. Veja abaixo exatamente qual dia teve minutos abaixo do
                         limite:
                       </span>
@@ -973,7 +1041,7 @@ export default function App() {
                             )}
                             {isDescartado && (
                               <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold border border-rose-500/30">
-                                Descartado (&le; {TOLERANCIA_MINUTOS}m)
+                                Descartado (&le; {toleranciaMinutos}m)
                               </span>
                             )}
                             {dia.status50 === 'zerado' && <span className="text-slate-600 text-[11px]">-</span>}
@@ -989,7 +1057,7 @@ export default function App() {
               <div className="px-6 py-3 border-t border-slate-800 bg-slate-950 flex items-center justify-between text-xs text-slate-400">
                 <span>
                   Dica: caso <strong>{selectedEmployeeDetail.nome}</strong> deva receber cada minuto sem tolerância de{' '}
-                  {TOLERANCIA_MINUTOS}m, adicione o nome dele na lista de exceção acima.
+                  {toleranciaMinutos}m, adicione o nome dele na lista de exceção acima.
                 </span>
                 <button
                   onClick={() => setSelectedEmployeeDetail(null)}
@@ -1004,7 +1072,7 @@ export default function App() {
       </main>
 
       <footer className="border-t border-slate-800/80 bg-slate-950 py-4 px-6 text-center text-xs text-slate-500">
-        Calculadora de Horas Extras e Processador de Ponto • Regra de {TOLERANCIA_MINUTOS} Minutos (CLT / Acordo)
+        Calculadora de Horas Extras e Processador de Ponto • Regra de {toleranciaMinutos} Minutos (CLT / Acordo)
       </footer>
     </div>
   );

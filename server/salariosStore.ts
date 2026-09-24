@@ -6,7 +6,14 @@ import { fileURLToPath } from 'node:url';
 import XLSX from 'xlsx';
 import { namesMatch } from '../src/shared/nameMatch.ts';
 import type { SalariosStore } from '../src/shared/types.ts';
-import { parseSalariosSheet, parseExcecoesSheet, isExcecoesSheetName } from './xlsxParsing.ts';
+import {
+  parseSalariosSheet,
+  parseExcecoesSheet,
+  isExcecoesSheetName,
+  parseConfigSheet,
+  isConfigSheetName,
+  DEFAULT_TOLERANCIA_MINUTOS,
+} from './xlsxParsing.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,6 +27,7 @@ export const SALARIOS_PATH = path.join(DADOS_DIR, 'salarios.xlsx');
 
 const SHEET_SALARIOS = 'Planilha1';
 const SHEET_EXCECOES = 'excessão extra';
+const SHEET_CONFIG = 'Configuração';
 
 // Serializa toda leitura/escrita nesse arquivo único para evitar que duas
 // operações concorrentes (ex: cadastrar + excluir em sequência rápida)
@@ -39,6 +47,11 @@ const ensureFileExists = () => {
     XLSX.utils.book_append_sheet(wb, wsSal, SHEET_SALARIOS);
     const wsExc = XLSX.utils.aoa_to_sheet([[]]);
     XLSX.utils.book_append_sheet(wb, wsExc, SHEET_EXCECOES);
+    const wsConfig = XLSX.utils.aoa_to_sheet([
+      ['CONFIGURAÇÃO', 'VALOR'],
+      ['TOLERANCIA_MINUTOS', DEFAULT_TOLERANCIA_MINUTOS],
+    ]);
+    XLSX.utils.book_append_sheet(wb, wsConfig, SHEET_CONFIG);
     XLSX.writeFile(wb, SALARIOS_PATH);
   }
 };
@@ -50,6 +63,10 @@ const loadWorkbook = (): XLSX.WorkBook => {
 
 const findExcecoesSheetName = (wb: XLSX.WorkBook): string | null => {
   return wb.SheetNames.find(isExcecoesSheetName) ?? null;
+};
+
+const findConfigSheetName = (wb: XLSX.WorkBook): string | null => {
+  return wb.SheetNames.find(isConfigSheetName) ?? null;
 };
 
 const parseWorkbook = (wb: XLSX.WorkBook): SalariosStore => {
@@ -65,7 +82,13 @@ const parseWorkbook = (wb: XLSX.WorkBook): SalariosStore => {
     : [];
   const excecoes = parseExcecoesSheet(excRows);
 
-  return { salarios, excecoes };
+  const configSheetName = findConfigSheetName(wb);
+  const configRows: any[][] = configSheetName
+    ? XLSX.utils.sheet_to_json(wb.Sheets[configSheetName], { header: 1 })
+    : [];
+  const toleranciaMinutos = parseConfigSheet(configRows);
+
+  return { salarios, excecoes, toleranciaMinutos };
 };
 
 const saveWorkbook = (wb: XLSX.WorkBook) => {
@@ -146,6 +169,34 @@ export const removeExcecao = (nome: string): Promise<SalariosStore> =>
     const kept = rows.filter(row => !(row?.[0] && namesMatch(String(row[0]), nome)));
 
     wb.Sheets[excSheetName] = XLSX.utils.aoa_to_sheet(kept);
+    saveWorkbook(wb);
+    return parseWorkbook(wb);
+  });
+
+export const setToleranciaMinutos = (minutos: number): Promise<SalariosStore> =>
+  enqueue(() => {
+    const wb = loadWorkbook();
+    let configSheetName = findConfigSheetName(wb);
+    if (!configSheetName) {
+      configSheetName = SHEET_CONFIG;
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['CONFIGURAÇÃO', 'VALOR']]), configSheetName);
+    }
+    const ws = wb.Sheets[configSheetName];
+    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    if (rows.length === 0) rows.push(['CONFIGURAÇÃO', 'VALOR']);
+
+    let updated = false;
+    for (let r = 1; r < rows.length; r++) {
+      const chave = String(rows[r]?.[0] || '').trim().toUpperCase();
+      if (chave === 'TOLERANCIA_MINUTOS') {
+        rows[r][1] = minutos;
+        updated = true;
+        break;
+      }
+    }
+    if (!updated) rows.push(['TOLERANCIA_MINUTOS', minutos]);
+
+    wb.Sheets[configSheetName] = XLSX.utils.aoa_to_sheet(rows);
     saveWorkbook(wb);
     return parseWorkbook(wb);
   });

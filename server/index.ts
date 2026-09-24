@@ -9,6 +9,7 @@ import {
   deleteSalario,
   addExcecao,
   removeExcecao,
+  setToleranciaMinutos,
   DADOS_DIR,
 } from './salariosStore.ts';
 
@@ -86,6 +87,18 @@ app.delete(
       return;
     }
     res.json(await removeExcecao(nome));
+  })
+);
+
+app.post(
+  '/api/configuracao',
+  asyncRoute(async (req, res) => {
+    const toleranciaMinutos = Number(req.body?.toleranciaMinutos);
+    if (!Number.isInteger(toleranciaMinutos) || toleranciaMinutos < 0) {
+      res.status(400).json({ error: 'Tolerância precisa ser um número inteiro maior ou igual a zero.' });
+      return;
+    }
+    res.json(await setToleranciaMinutos(toleranciaMinutos));
   })
 );
 

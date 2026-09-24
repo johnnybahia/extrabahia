@@ -87,3 +87,23 @@ export const isExcecoesSheetName = (sName: string): boolean => {
   const sNorm = normalizeSheetName(sName);
   return sNorm.includes('excess') || sNorm.includes('excec') || sNorm.includes('carencia');
 };
+
+export const isConfigSheetName = (sName: string): boolean => {
+  const sNorm = normalizeSheetName(sName);
+  return sNorm.includes('config');
+};
+
+export const DEFAULT_TOLERANCIA_MINUTOS = 19;
+
+// Aba de configuração: linhas [CHAVE, VALOR]. Hoje só guarda a tolerância
+// (minutos de carência da regra geral de 50%).
+export const parseConfigSheet = (rows: any[][]): number => {
+  for (const row of rows || []) {
+    const chave = String(row?.[0] || '').trim().toUpperCase();
+    if (chave === 'TOLERANCIA_MINUTOS') {
+      const num = Number(row?.[1]);
+      if (Number.isFinite(num) && num >= 0) return num;
+    }
+  }
+  return DEFAULT_TOLERANCIA_MINUTOS;
+};
