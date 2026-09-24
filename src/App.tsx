@@ -19,6 +19,7 @@ import {
   Pencil,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { isNameInList, findRateForName } from './shared/nameMatch';
 import type { SalariosStore } from './shared/types';
 
@@ -553,23 +554,78 @@ export default function App() {
     }
   };
 
-  const handleExportCalculatedExcel = () => {
+  const handleExportCalculatedExcel = async () => {
     if (processedResults.length === 0) return;
-    const wb = XLSX.utils.book_new();
-    const dataRows = processedResults.map(r => ({
-      'NOME DO FUNCIONÁRIO': r.nome,
-      'REGRA APLICADA': r.ehExcecao ? 'EXCEÇÃO (CADA MINUTO)' : `GERAL (> ${toleranciaMinutos}m)`,
-      'EXTRAS 50%': r.extras50,
-      'TOTAL 50%': Number(r.total50.toFixed(2)),
-      'EXTRAS 100%': r.extras100,
-      'TOTAL 100%': Number(r.total100.toFixed(2)),
-      TOTAL: Number(r.totalGeral.toFixed(2)),
-      [`DIAS 50% APROV. (> ${toleranciaMinutos}m)`]: r.diasAprovados,
-      [`DIAS 50% DESC. (<= ${toleranciaMinutos}m)`]: r.diasDescartados,
-    }));
-    const ws = XLSX.utils.json_to_sheet(dataRows);
-    XLSX.utils.book_append_sheet(wb, ws, 'Relatorio');
-    XLSX.writeFile(wb, 'EXTRAS CALCULADAS.xlsx');
+
+    const MONEY_FORMAT = '"R$" #,##0.00';
+    const HEADER_FILL = 'FF1E3A5F';
+    const BORDER = { style: 'thin' as const, color: { argb: 'FFB0B7C3' } };
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Relatorio', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+    ws.columns = [
+      { header: 'NOME DO FUNCIONÁRIO', key: 'nome', width: 34 },
+      { header: 'EXTRAS 50%', key: 'extras50', width: 13 },
+      { header: 'TOTAL 50%', key: 'total50', width: 15 },
+      { header: 'EXTRAS 100%', key: 'extras100', width: 13 },
+      { header: 'TOTAL 100%', key: 'total100', width: 15 },
+      { header: 'TOTAL', key: 'total', width: 15 },
+    ];
+
+    const headerRow = ws.getRow(1);
+    headerRow.height = 20;
+    headerRow.eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = { bottom: BORDER };
+    });
+
+    const moneyKeys: Array<'total50' | 'total100' | 'total'> = ['total50', 'total100', 'total'];
+
+    processedResults.forEach(r => {
+      const row = ws.addRow({
+        nome: r.nome,
+        extras50: r.extras50,
+        total50: Number(r.total50.toFixed(2)),
+        extras100: r.extras100,
+        total100: Number(r.total100.toFixed(2)),
+        total: Number(r.totalGeral.toFixed(2)),
+      });
+      moneyKeys.forEach(key => {
+        const cell = row.getCell(key);
+        cell.numFmt = MONEY_FORMAT;
+        cell.alignment = { horizontal: 'right' };
+      });
+      row.getCell('extras50').alignment = { horizontal: 'center' };
+      row.getCell('extras100').alignment = { horizontal: 'center' };
+    });
+
+    const somaRow = ws.addRow({
+      nome: 'TOTAL GERAL',
+      total50: Number(processedResults.reduce((s, r) => s + r.total50, 0).toFixed(2)),
+      total100: Number(processedResults.reduce((s, r) => s + r.total100, 0).toFixed(2)),
+      total: Number(processedResults.reduce((s, r) => s + r.totalGeral, 0).toFixed(2)),
+    });
+    somaRow.eachCell(cell => {
+      cell.font = { bold: true };
+      cell.border = { top: BORDER };
+    });
+    moneyKeys.forEach(key => {
+      const cell = somaRow.getCell(key);
+      cell.numFmt = MONEY_FORMAT;
+      cell.alignment = { horizontal: 'right' };
+    });
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'EXTRAS CALCULADAS.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const salariosOrdenados = Object.entries(salariosMap).sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
